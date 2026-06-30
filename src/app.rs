@@ -1,17 +1,18 @@
 use eframe::egui;
 
-use crate::models::{Panel, SampleItem, TrackNote};
+use crate::midi::parse_midi_file;
+use crate::models::{MidiData, Panel, SampleItem, TrackNote};
 use crate::theme::{BG_CARD, BG_PAGE, BORDER};
 use crate::ui;
 
 pub struct App {
     active_panel: Panel,
     samples: Vec<SampleItem>,
-    midi_name: String,
-    track_count: usize,
+    midi_data: Option<MidiData>,
     is_generating: bool,
     generate_progress: f32,
-    notes: Vec<TrackNote>,
+    selected_track: Option<usize>,
+    error_message: Option<String>,
 }
 
 impl App {
@@ -75,58 +76,90 @@ impl App {
             },
         ];
 
-        let notes = vec![
-            TrackNote {
-                pitch: "C4".into(),
-                start: 0.0,
-                length: 0.5,
-            },
-            TrackNote {
-                pitch: "E4".into(),
-                start: 0.5,
-                length: 0.25,
-            },
-            TrackNote {
-                pitch: "G4".into(),
-                start: 0.75,
-                length: 0.5,
-            },
-            TrackNote {
-                pitch: "A4".into(),
-                start: 1.25,
-                length: 0.75,
-            },
-            TrackNote {
-                pitch: "G4".into(),
-                start: 2.0,
-                length: 0.25,
-            },
-            TrackNote {
-                pitch: "E4".into(),
-                start: 2.25,
-                length: 0.5,
-            },
-            TrackNote {
-                pitch: "C4".into(),
-                start: 2.75,
-                length: 1.0,
-            },
-        ];
-
         Self {
             active_panel: Panel::Library,
             samples,
-            midi_name: "Bad_Apple.mid".into(),
-            track_count: 3,
+            midi_data: None,
             is_generating: false,
             generate_progress: 0.0,
-            notes,
+            selected_track: None,
+            error_message: None,
         }
+    }
+
+    fn load_midi_file(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("MIDI files", &["mid", "midi"])
+            .set_title("选择 MIDI 文件");
+
+        if let Some(path) = dialog.pick_file() {
+            match parse_midi_file(&path) {
+                Ok(midi_data) => {
+                    self.midi_data = Some(midi_data);
+                    self.error_message = None;
+                    self.selected_track = None;
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("MIDI 解析失败: {}", e));
+                    self.midi_data = None;
+                }
+            }
+        }
+    }
+
+    fn get_notes_for_display(&self) -> Vec<TrackNote> {
+        if let Some(ref midi_data) = self.midi_data {
+            if let Some(track_idx) = self.selected_track {
+                midi_data
+                    .notes
+                    .iter()
+                    .filter(|n| n.track_index == track_idx)
+                    .cloned()
+                    .collect()
+            } else {
+                midi_data.notes.clone()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn get_track_count(&self) -> usize {
+        self.midi_data
+            .as_ref()
+            .map(|d| d.tracks.len())
+            .unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
+    fn get_total_notes(&self) -> usize {
+        self.midi_data
+            .as_ref()
+            .map(|d| d.notes.len())
+            .unwrap_or(0)
+    }
+
+    fn get_midi_name(&self) -> String {
+        self.midi_data
+            .as_ref()
+            .map(|d| d.file_name.clone())
+            .unwrap_or_else(|| "未加载".into())
+    }
+
+    #[allow(dead_code)]
+    fn get_tempo(&self) -> f32 {
+        self.midi_data.as_ref().map(|d| d.tempo).unwrap_or(120.0)
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let midi_name = self.get_midi_name();
+        let track_count = self.get_track_count();
+        let error_message = self.error_message.clone();
+        let active_panel = self.active_panel.clone();
+        let notes = self.get_notes_for_display();
+
         ui::render_top_bar(ctx, &mut self.active_panel);
 
         egui::SidePanel::left("sidebar_panel")
@@ -141,11 +174,18 @@ impl eframe::App for App {
                 ui::render_sidebar(
                     ui,
                     &mut self.active_panel,
-                    &self.midi_name,
-                    self.track_count,
+                    &midi_name,
+                    track_count,
                     &self.samples,
                 );
+
+                if let Some(ref error) = error_message {
+                    ui.add_space(12.0);
+                    ui.colored_label(egui::Color32::from_rgb(220, 50, 50), error);
+                }
             });
+
+        let mut import_clicked = false;
 
         egui::CentralPanel::default()
             .frame(
@@ -154,19 +194,32 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(0)),
             )
             .show(ctx, |ui| {
-                match self.active_panel {
+                match active_panel {
                     Panel::Library => ui::render_library(ui, &self.samples),
-                    Panel::Tracks => ui::render_tracks(ui, &self.notes),
+                    Panel::Tracks => {
+                        let tracks_resp = ui::render_tracks(
+                            ui,
+                            &notes,
+                            self.midi_data.as_ref(),
+                            &mut self.selected_track,
+                            self.error_message.as_ref(),
+                        );
+                        import_clicked = tracks_resp.import_clicked;
+                    }
                     Panel::Generate => ui::render_generate(
                         ui,
-                        &self.midi_name,
-                        self.track_count,
+                        &midi_name,
+                        track_count,
                         &self.samples,
                         &mut self.is_generating,
                         &mut self.generate_progress,
                     ),
                 }
             });
+
+        if import_clicked {
+            self.load_midi_file();
+        }
 
         if self.is_generating {
             self.generate_progress += 0.008;

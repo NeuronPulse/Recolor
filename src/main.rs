@@ -1,4 +1,5 @@
 mod app;
+mod midi;
 mod models;
 mod theme;
 mod ui;
