@@ -95,6 +95,7 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
                                     let length = end_time - start_time;
 
                                     all_notes.push(TrackNote {
+                                        key: key.as_int(),
                                         pitch: key_to_name(key.as_int()),
                                         start: start_time as f32,
                                         length: length as f32,
@@ -117,6 +118,7 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
                                 let length = end_time - start_time;
 
                                 all_notes.push(TrackNote {
+                                    key: key.as_int(),
                                     pitch: key_to_name(key.as_int()),
                                     start: start_time as f32,
                                     length: length as f32,

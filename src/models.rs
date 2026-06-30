@@ -16,6 +16,7 @@ pub struct SampleItem {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct TrackNote {
+    pub key: u8,
     pub pitch: String,
     pub start: f32,
     pub length: f32,

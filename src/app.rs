@@ -4,6 +4,7 @@ use crate::midi::parse_midi_file;
 use crate::models::{MidiData, Panel, SampleItem, TrackNote};
 use crate::theme::{BG_CARD, BG_PAGE, BORDER};
 use crate::ui;
+use crate::ui::TrackView;
 
 pub struct App {
     active_panel: Panel,
@@ -12,6 +13,7 @@ pub struct App {
     is_generating: bool,
     generate_progress: f32,
     selected_track: Option<usize>,
+    view_mode: TrackView,
     error_message: Option<String>,
 }
 
@@ -83,6 +85,7 @@ impl App {
             is_generating: false,
             generate_progress: 0.0,
             selected_track: None,
+            view_mode: TrackView::PianoRoll,
             error_message: None,
         }
     }
@@ -202,6 +205,7 @@ impl eframe::App for App {
                             &notes,
                             self.midi_data.as_ref(),
                             &mut self.selected_track,
+                            &mut self.view_mode,
                             self.error_message.as_ref(),
                         );
                         import_clicked = tracks_resp.import_clicked;
