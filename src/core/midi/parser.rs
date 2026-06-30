@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use midly::{MetaMessage, MidiMessage, Smf, TrackEventKind};
 
-use crate::models::{MidiData, MidiTrack, TrackNote};
-use crate::midi::pitch::key_to_name;
+use super::model::{MidiData, MidiNote, MidiTrack};
+use super::pitch::key_to_name;
 
 #[derive(Debug)]
 pub enum MidiParseError {
@@ -51,14 +52,35 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
         midly::Timing::Timecode(..) => 480,
     };
 
-    let mut all_notes: Vec<TrackNote> = Vec::new();
+    // ── Pass 1: collect ALL tempo events from ALL tracks ──
+    let mut tempo_events: Vec<(u64, u32)> = Vec::new();
+    for track in &smf.tracks {
+        let mut tick: u64 = 0;
+        for event in track {
+            tick += event.delta.as_int() as u64;
+            if let TrackEventKind::Meta(MetaMessage::Tempo(t)) = event.kind {
+                tempo_events.push((tick, t.as_int()));
+            }
+        }
+    }
+    tempo_events.sort_by_key(|e| e.0);
+
+    // ── Pass 2: collect notes as ticks, collect track metadata ──
+    struct RawNote {
+        key: u8,
+        velocity: u8,
+        channel: u8,
+        track_index: usize,
+        start_tick: u64,
+        end_tick: u64,
+    }
+
+    let mut raw_notes: Vec<RawNote> = Vec::new();
     let mut tracks: Vec<MidiTrack> = Vec::new();
-    let mut tempo: f32 = 120.0;
 
     for (track_idx, track) in smf.tracks.iter().enumerate() {
         let mut track_name = format!("Track {}", track_idx + 1);
-        let mut notes_on: std::collections::HashMap<(u8, u8), (u64, u8)> =
-            std::collections::HashMap::new();
+        let mut notes_on: HashMap<(u8, u8), (u64, u8)> = HashMap::new();
         let mut current_tick: u64 = 0;
         let mut track_channel: u8 = 0;
         let mut note_count: usize = 0;
@@ -72,9 +94,6 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
                         track_name = name_str.to_string();
                     }
                 }
-                TrackEventKind::Meta(MetaMessage::Tempo(t)) => {
-                    tempo = 60_000_000.0 / t.as_int() as f32;
-                }
                 TrackEventKind::Midi { channel, message } => {
                     track_channel = channel.as_int();
                     match message {
@@ -84,47 +103,31 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
                                     (key.as_int(), channel.as_int()),
                                     (current_tick, vel.as_int()),
                                 );
-                            } else {
-                                if let Some((start_tick, velocity)) =
-                                    notes_on.remove(&(key.as_int(), channel.as_int()))
-                                {
-                                    let start_time =
-                                        tick_to_seconds(start_tick, tempo, ticks_per_beat);
-                                    let end_time =
-                                        tick_to_seconds(current_tick, tempo, ticks_per_beat);
-                                    let length = end_time - start_time;
-
-                                    all_notes.push(TrackNote {
-                                        key: key.as_int(),
-                                        pitch: key_to_name(key.as_int()),
-                                        start: start_time as f32,
-                                        length: length as f32,
-                                        velocity,
-                                        channel: channel.as_int(),
-                                        track_index: track_idx,
-                                    });
-                                    note_count += 1;
-                                }
+                            } else if let Some((start_tick, velocity)) =
+                                notes_on.remove(&(key.as_int(), channel.as_int()))
+                            {
+                                raw_notes.push(RawNote {
+                                    key: key.as_int(),
+                                    velocity,
+                                    channel: channel.as_int(),
+                                    track_index: track_idx,
+                                    start_tick,
+                                    end_tick: current_tick,
+                                });
+                                note_count += 1;
                             }
                         }
                         MidiMessage::NoteOff { key, .. } => {
                             if let Some((start_tick, velocity)) =
                                 notes_on.remove(&(key.as_int(), channel.as_int()))
                             {
-                                let start_time =
-                                    tick_to_seconds(start_tick, tempo, ticks_per_beat);
-                                let end_time =
-                                    tick_to_seconds(current_tick, tempo, ticks_per_beat);
-                                let length = end_time - start_time;
-
-                                all_notes.push(TrackNote {
+                                raw_notes.push(RawNote {
                                     key: key.as_int(),
-                                    pitch: key_to_name(key.as_int()),
-                                    start: start_time as f32,
-                                    length: length as f32,
                                     velocity,
                                     channel: track_channel,
                                     track_index: track_idx,
+                                    start_tick,
+                                    end_tick: current_tick,
                                 });
                                 note_count += 1;
                             }
@@ -149,21 +152,54 @@ pub fn parse_midi_file(path: &Path) -> Result<MidiData, MidiParseError> {
         return Err(MidiParseError::NoTracks);
     }
 
-    if all_notes.is_empty() {
+    if raw_notes.is_empty() {
         return Err(MidiParseError::NoNotes);
     }
 
-    all_notes.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+    // ── Pass 3: convert ticks to seconds using complete tempo map ──
+    let all_notes: Vec<MidiNote> = raw_notes
+        .into_iter()
+        .map(|rn| {
+            let start = tick_to_seconds(rn.start_tick, &tempo_events, ticks_per_beat);
+            let end = tick_to_seconds(rn.end_tick, &tempo_events, ticks_per_beat);
+            let length = (end - start).max(0.01);
+            MidiNote {
+                key: rn.key,
+                pitch: key_to_name(rn.key),
+                start: start as f32,
+                length: length as f32,
+                velocity: rn.velocity,
+                channel: rn.channel,
+                track_index: rn.track_index,
+            }
+        })
+        .collect();
+
+    let mut sorted_notes = all_notes;
+    sorted_notes.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+
+    let tempo = tempo_events
+        .first()
+        .map(|(_, uspb)| 60_000_000.0 / *uspb as f32)
+        .unwrap_or(120.0);
 
     Ok(MidiData {
         file_name,
         tracks,
-        notes: all_notes,
+        notes: sorted_notes,
         tempo,
     })
 }
 
-fn tick_to_seconds(tick: u64, tempo: f32, ticks_per_beat: u16) -> f64 {
-    let seconds_per_beat = 60.0 / tempo;
-    (tick as f64) * (seconds_per_beat as f64) / (ticks_per_beat as f64)
+fn tick_to_seconds(tick: u64, tempo_events: &[(u64, u32)], ticks_per_beat: u16) -> f64 {
+    // find the active tempo for this tick
+    let uspb = tempo_events
+        .iter()
+        .rev()
+        .find(|(t, _)| *t <= tick)
+        .map(|(_, u)| *u)
+        .unwrap_or(500_000); // default 120 BPM = 500,000 us/beat
+
+    let seconds_per_beat = uspb as f64 / 1_000_000.0;
+    (tick as f64 / ticks_per_beat as f64) * seconds_per_beat
 }

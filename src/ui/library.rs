@@ -1,9 +1,15 @@
-use crate::models::SampleItem;
-use crate::theme::{
-    self, BG_CARD, BG_ELEVATED, BORDER, BORDER_LIGHT, TEXT_MUTED, TEXT_PRIMARY,
-};
+use crate::core::project::Project;
+use crate::theme::{self, BG_CARD, BG_ELEVATED, BORDER, BORDER_LIGHT, TEXT_MUTED, TEXT_PRIMARY};
 
-pub fn render_library(ui: &mut egui::Ui, samples: &[SampleItem]) {
+pub struct LibraryResponse {
+    pub import_clicked: bool,
+}
+
+pub fn render_library(ui: &mut egui::Ui, project: &Project) -> LibraryResponse {
+    let mut response = LibraryResponse {
+        import_clicked: false,
+    };
+
     ui.add_space(12.0);
 
     ui.horizontal(|ui| {
@@ -16,7 +22,7 @@ pub fn render_library(ui: &mut egui::Ui, samples: &[SampleItem]) {
         );
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new(format!("{} 个切片", samples.len()))
+            egui::RichText::new(format!("{} 个切片", project.samples.len()))
                 .size(11.0)
                 .color(TEXT_MUTED)
                 .family(egui::FontFamily::Monospace),
@@ -25,17 +31,26 @@ pub fn render_library(ui: &mut egui::Ui, samples: &[SampleItem]) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(12.0);
             let btn = egui::Button::new(
-                egui::RichText::new("+ 导入素材").size(12.0).color(TEXT_PRIMARY),
+                egui::RichText::new("+ 导入素材")
+                    .size(12.0)
+                    .color(TEXT_PRIMARY),
             )
             .corner_radius(4)
             .fill(BG_ELEVATED)
             .stroke(egui::Stroke::new(1.0, BORDER_LIGHT));
-            ui.add(btn);
+            if ui.add(btn).clicked() {
+                response.import_clicked = true;
+            }
         });
     });
 
     ui.add_space(8.0);
     ui.add_space(12.0);
+
+    if project.samples.is_empty() {
+        render_empty_state(ui, &mut response.import_clicked);
+        return response;
+    }
 
     let header_frame = egui::Frame::new()
         .fill(BG_CARD)
@@ -49,14 +64,6 @@ pub fn render_library(ui: &mut egui::Ui, samples: &[SampleItem]) {
             ui.add_space(40.0 + 12.0 + 3.0 * 8.0);
             ui.label(egui::RichText::new("文件名").size(11.0).color(TEXT_MUTED));
             ui.add_space(80.0);
-            ui.label(egui::RichText::new("时长").size(11.0).color(TEXT_MUTED));
-            ui.add_space(40.0);
-            ui.label(
-                egui::RichText::new("采样率")
-                    .size(11.0)
-                    .color(TEXT_MUTED),
-            );
-            ui.add_space(40.0);
             ui.label(egui::RichText::new("格式").size(11.0).color(TEXT_MUTED));
             ui.add_space(40.0);
             ui.label(egui::RichText::new("音高").size(11.0).color(TEXT_MUTED));
@@ -69,14 +76,52 @@ pub fn render_library(ui: &mut egui::Ui, samples: &[SampleItem]) {
         ui.add_space(4.0);
         ui.add_space(12.0);
 
-        for (i, sample) in samples.iter().enumerate() {
-            render_sample_item(ui, sample, i);
+        for clip in &project.samples.clips {
+            render_clip_item(ui, clip);
             ui.add_space(2.0);
         }
     });
+
+    response
 }
 
-pub fn render_sample_item(ui: &mut egui::Ui, sample: &SampleItem, _index: usize) {
+fn render_empty_state(ui: &mut egui::Ui, import_clicked: &mut bool) {
+    ui.add_space(40.0);
+
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new("📂").size(48.0).color(TEXT_MUTED));
+        ui.add_space(16.0);
+        ui.label(
+            egui::RichText::new("素材库为空")
+                .size(16.0)
+                .color(TEXT_PRIMARY),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("导入视频/音频素材目录")
+                .size(12.0)
+                .color(TEXT_MUTED),
+        );
+        ui.add_space(24.0);
+
+        let import_btn = egui::Button::new(
+            egui::RichText::new("📂  导入素材目录")
+                .size(13.0)
+                .color(egui::Color32::WHITE),
+        )
+        .corner_radius(4)
+        .fill(theme::ACCENT)
+        .min_size(egui::vec2(160.0, 36.0));
+
+        if ui.add(import_btn).clicked() {
+            *import_clicked = true;
+        }
+    });
+
+    ui.add_space(40.0);
+}
+
+fn render_clip_item(ui: &mut egui::Ui, clip: &crate::core::sample::SampleClip) {
     let item_frame = egui::Frame::new()
         .fill(BG_CARD)
         .stroke(egui::Stroke::new(1.0, BORDER))
@@ -96,7 +141,7 @@ pub fn render_sample_item(ui: &mut egui::Ui, sample: &SampleItem, _index: usize)
 
             format_frame.show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new(&sample.format)
+                    egui::RichText::new(&clip.format)
                         .size(10.0)
                         .color(TEXT_MUTED)
                         .family(egui::FontFamily::Monospace),
@@ -105,32 +150,11 @@ pub fn render_sample_item(ui: &mut egui::Ui, sample: &SampleItem, _index: usize)
 
             ui.add_space(4.0);
 
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(&sample.name)
-                        .size(13.0)
-                        .color(TEXT_PRIMARY),
-                );
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("时长: {}", sample.duration))
-                            .size(11.0)
-                            .color(TEXT_MUTED),
-                    );
-                    ui.label(
-                        egui::RichText::new("·").size(11.0).color(TEXT_MUTED),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "采样率: {}",
-                            sample.sample_rate
-                        ))
-                        .size(11.0)
-                        .color(TEXT_MUTED),
-                    );
-                });
-            });
+            ui.label(
+                egui::RichText::new(&clip.name)
+                    .size(13.0)
+                    .color(TEXT_PRIMARY),
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let pitch_frame = egui::Frame::new()
@@ -141,7 +165,7 @@ pub fn render_sample_item(ui: &mut egui::Ui, sample: &SampleItem, _index: usize)
 
                 pitch_frame.show(ui, |ui| {
                     ui.label(
-                        egui::RichText::new(&sample.pitch)
+                        egui::RichText::new(clip.pitch_name())
                             .size(12.0)
                             .color(theme::MONO)
                             .family(egui::FontFamily::Monospace),

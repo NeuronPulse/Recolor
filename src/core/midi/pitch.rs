@@ -1,4 +1,6 @@
-const NOTE_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const NOTE_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
 
 pub fn key_to_name(key: u8) -> String {
     let octave = (key / 12) as i8 - 1;
@@ -6,8 +8,6 @@ pub fn key_to_name(key: u8) -> String {
     format!("{}{}", NOTE_NAMES[note_index], octave)
 }
 
-#[allow(dead_code)]
-#[allow(dead_code)]
 pub fn name_to_key(name: &str) -> Option<u8> {
     let name = name.trim();
     if name.len() < 2 {
@@ -44,7 +44,7 @@ pub fn name_to_key(name: &str) -> Option<u8> {
     };
 
     let octave: i8 = octave_part.parse().ok()?;
-    if octave < -1 || octave > 9 {
+    if !(-1..=9).contains(&octave) {
         return None;
     }
 

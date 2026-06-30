@@ -9,3 +9,4 @@ egui = "0.31"
 egui_extras = { version = "0.31", features = ["image"] }
 midly = "0.5"
 rfd = "0.15"
+rodio = "0.19"

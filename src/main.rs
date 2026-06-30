@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 mod app;
-mod midi;
-mod models;
+mod audio;
+mod core;
 mod theme;
 mod ui;
 
